@@ -7,7 +7,7 @@ Provides fallback to simple fixed-size chunking if RLM is unavailable.
 
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 import json
 import subprocess
 from datetime import datetime
@@ -115,14 +115,65 @@ class ChunkedMemory:
         self,
         task_description: str,
         team_id: Optional[str] = None,
-        limit: int = 3
-    ) -> List[Dict]:
+        limit: int = 3,
+        chunked: bool = True
+    ) -> Union['MemoryChunkedResult', List[Dict]]:
         """
         Retrieve relevant memory chunks using keyword matching.
 
         Args:
             task_description: Description of the current task
             team_id: Optional filter for specific team
+            limit: Maximum number of chunks to return (for non-chunked mode)
+            chunked: If True, return ChunkedResult; if False, return raw list
+
+        Returns:
+            MemoryChunkedResult (if chunked=True) or
+            List of dicts with keys: metadata, relevance, team_id, content (if chunked=False)
+        """
+        from .chunked_result import MemoryChunkedResult, TierConfig
+
+        if chunked:
+            # Create chunked result with lazy loading
+            def loader(min_relevance: float, max_items: int) -> List[tuple[Dict, float]]:
+                return self._retrieve_relevant_raw(
+                    task_description,
+                    team_id,
+                    min_relevance=min_relevance,
+                    limit=max_items
+                )
+
+            return MemoryChunkedResult(
+                query=task_description,
+                loader=loader,
+                config=TierConfig(
+                    critical_limit=2,
+                    relevant_limit=5,
+                    context_limit=10,
+                    all_limit=50,
+                    critical_min_relevance=0.7,
+                    relevant_min_relevance=0.4,
+                    context_min_relevance=self.RELEVANCE_THRESHOLD
+                )
+            )
+        else:
+            # Legacy behavior: return raw list
+            return self._retrieve_relevant_raw(task_description, team_id, limit=limit)
+
+    def _retrieve_relevant_raw(
+        self,
+        task_description: str,
+        team_id: Optional[str] = None,
+        min_relevance: float = 0.0,
+        limit: int = 50
+    ) -> List[Dict]:
+        """
+        Raw memory retrieval without chunking.
+
+        Args:
+            task_description: Description of the current task
+            team_id: Optional filter for specific team
+            min_relevance: Minimum relevance threshold (default: uses RELEVANCE_THRESHOLD)
             limit: Maximum number of chunks to return
 
         Returns:
@@ -130,6 +181,7 @@ class ChunkedMemory:
         """
         task_keywords = self._extract_keywords(task_description)
         relevant = []
+        threshold = max(min_relevance, self.RELEVANCE_THRESHOLD)
 
         # Determine search directories
         if team_id:
@@ -152,7 +204,7 @@ class ChunkedMemory:
                     chunk_keywords = chunk_metadata.get("keywords", [])
                     relevance = self._calculate_relevance(task_keywords, chunk_keywords)
 
-                    if relevance >= self.RELEVANCE_THRESHOLD:
+                    if relevance >= threshold:
                         # Try to load the chunk content
                         chunk_file = team_dir / f"{chunk_metadata['chunk_id']}.json"
                         content = None

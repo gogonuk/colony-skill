@@ -7,8 +7,8 @@
 *Add memory and learning to Claude Code's native teams*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/gogonuk/colony-skill)
-[![LOC](https://img.shields.io/badge/LOC-1,651-green.svg)](https://github.com/gogonuk/colony-skill)
+[![Version](https://img.shields.io/badge/version-0.1.2-blue.svg)](https://github.com/gogonuk/colony-skill)
+[![LOC](https://img.shields.io/badge/LOC-3,791-green.svg)](https://github.com/gogonuk/colony-skill)
 
 ---
 
@@ -166,17 +166,31 @@ You should see:
 ║  │   TRACKER     │    │   LIBRARY    │    │   CHUNKER    │              ║
 ║  │              │    │              │    │              │              ║
 ║  │  5-tier sys  │    │  Keyword srch│    │  RLM + fall  │              ║
-║  │  276 LOC     │    │  409 LOC     │    │  560 LOC     │              ║
+║  │  276 LOC     │    │  460 LOC     │    │  612 LOC     │              ║
 ║  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘              ║
 ║         │                   │                   │                       ║
 ║         └───────────────────┼───────────────────┘                       ║
+║                             │                                           ║
+║                    ┌────────▼────────┐                                ║
+║                    │ CHUNKED RESULT │◀──── Lazy-loading tiered access  ║
+║                    │  LAYER         │    (517 LOC)                      ║
+║                    └────────┬────────┘                                ║
 ║                             │                                           ║
 ║                    ┌────────▼────────┐                                ║
 ║                    │ NATIVE WRAPPER  │                                ║
 ║                    │  403 LOC        │                                ║
 ║                    └────────┬────────┘                                ║
 ║                             │                                           ║
-║                             ▼                                           ║
+║         ┌───────────────────┼───────────────────┐                       ║
+║         │                   │                   │                       ║
+║  ┌──────▼──────┐    ┌──────▼───────┐    ┌─────▼─────┐                ║
+║  │ COMMAND     │    │ PATTERN      │    │ DASHBOARD  │                ║
+║  │ ROUTER      │    │ EXTRACTOR    │    │ (OPTIONAL) │                ║
+║  │             │    │              │    │            │                ║
+║  │  772 LOC    │    │  Auto-extr   │    │  Flask UI  │                ║
+║  └──────┬──────┘    │  711 LOC     │    └────────────┘                ║
+║         │           └──────────────┘                                   ║
+║         ▼                                                               ║
 ║              ┌────────────────────────────┐                           ║
 ║              │   NATIVE TEAM API          │                           ║
 ║              │   (TaskCreate, TeamCreate) │                           ║
@@ -185,9 +199,10 @@ You should see:
 ╠═══════════════════════════════════════════════════════════════════════╣
 ║                        DATA STORAGE                                    ║
 ║                                                                         ║
-║   ~/.colony/reputation/  →  Agent reputation JSON files                 ║
-║   ~/.colony/patterns/    →  Pattern library by category                 ║
-║   ~/.colony/memory/      →  Chunked conversation history                ║
+║   ~/.colony/reputation/        →  Agent reputation JSON files           ║
+║   ~/.colony/patterns/          →  Pattern library by category           ║
+║   ~/.colony/memory/            →  Chunked conversation history          ║
+║   ~/.colony/extracted_patterns/→  Pending pattern reviews               ║
 ║                                                                         ║
 ╚═══════════════════════════════════════════════════════════════════════╝
 ```
@@ -247,6 +262,67 @@ UNKNOWN ──► NOVICE ──► CONTRIBUTOR ──► EXPERT ──► ELITE
 - Native team state reading
 - Custom template creation
 
+### CommandRouter (812 LOC)
+
+**Features:**
+- Centralized command parsing for all Colony commands
+- Tokenizes arguments while respecting quoted strings
+- Routes commands to appropriate handlers
+- Validates team types and pattern categories
+- Provides formatted help and error messages
+
+### PatternExtractor (632 LOC)
+
+**Features:**
+- Automatic pattern extraction from successful tasks
+- Quality assessment (EXCELLENT, GOOD, MODERATE, LOW)
+- Category classification with keyword matching
+- Approach extraction (steps, tools, focus areas)
+- Lesson learned detection
+- Human review workflow with pending patterns
+- Auto-commit for excellent quality patterns
+
+**Pattern Categories:**
+- Security, Code Review, Debugging, Testing
+- Refactoring, Optimization, Documentation, Migration
+
+### ChunkedResult (528 LOC)
+
+**Features:**
+- Lazy-loading, tiered access to search results
+- Progressive loading (critical → relevant → context → all)
+- Configurable relevance thresholds
+- Automatic deduplication
+- Summary generation
+- Backward compatible with raw list mode
+
+**Relevance Tiers:**
+```
+┌────────────────────────────────────────────────────────────┐
+│  CRITICAL (≥0.7):  Must-have context, fast path            │
+│  RELEVANT (≥0.4):  Nice-to-have, balanced path             │
+│  CONTEXT  (≥0.2):  Background info, expanded path          │
+│  ALL       (0.0):  Everything, complete path               │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Usage:**
+```python
+results = library.find_relevant("sql injection")
+
+# Fast path - only critical
+patterns = results.critical()
+
+# Balanced path - critical + relevant
+patterns = results.relevant()
+
+# Complete path - everything
+patterns = results.all()
+
+# Summary for overview
+summary = results.summary()
+```
+
 ---
 
 ## 📂 Storage Structure
@@ -264,14 +340,19 @@ UNKNOWN ──► NOVICE ──► CONTRIBUTOR ──► EXPERT ──► ELITE
 │   └── code_review/
 │       └── checklist.json
 │
-└── memory/                  # Chunked conversations
-    └── conversations/
-        ├── team-a/
-        │   ├── index.json
-        │   ├── chunk_001.json
-        │   └── chunk_002.json
-        └── team-b/
-            └── index.json
+├── memory/                  # Chunked conversations
+│   └── conversations/
+│       ├── team-a/
+│       │   ├── index.json
+│       │   ├── chunk_001.json
+│       │   └── chunk_002.json
+│       └── team-b/
+│           └── index.json
+│
+└── extracted_patterns/      # Pending pattern reviews
+    ├── security_20260304_120000.json
+    ├── extraction_history.json
+    └── ...
 ```
 
 ---

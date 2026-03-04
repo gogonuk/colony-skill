@@ -15,6 +15,9 @@ from colony.core.reputation_tracker import ReputationTracker
 from colony.core.pattern_library import PatternLibrary
 from colony.core.native_wrapper import NativeTeamWrapper
 from colony.core.chunked_memory import ChunkedMemory
+from colony.core.cli import CommandRouter
+from colony.core.pattern_extractor import PatternExtractor, ExtractionContext, PatternQuality
+from datetime import datetime
 
 def colony_status():
     """Simulate the /colony status command."""
@@ -92,7 +95,7 @@ def colony_status():
         print(f"   Size: {size / 1024:.1f} KB")
 
     print("\n" + "="*50)
-    print("Colony v0.1.0 - All systems operational")
+    print("Colony v0.1.2 - All systems operational")
     print("="*50 + "\n")
 
     return True
@@ -179,6 +182,14 @@ if __name__ == "__main__":
     # Patterns
     subparsers.add_parser("patterns", help="List patterns")
 
+    # Command Router Test
+    subparsers.add_parser("router", help="Test CommandRouter")
+
+    # Pattern Extractor Test
+    extract_parser = subparsers.add_parser("extract", help="Test PatternExtractor")
+    extract_parser.add_argument("--task", default="Fix SQL injection vulnerability",
+                               help="Test task description")
+
     args = parser.parse_args()
 
     if not args.command or args.command == "status":
@@ -187,3 +198,38 @@ if __name__ == "__main__":
         colony_reputation()
     elif args.command == "patterns":
         colony_patterns_list()
+    elif args.command == "router":
+        print("\n" + "="*50)
+        print("🔧 CommandRouter Test")
+        print("="*50)
+        router = CommandRouter()
+        result = router.route("status")
+        print(f"status command: {result['success']}")
+        if result.get('data'):
+            print(f"  Data: {result['data']}")
+    elif args.command == "extract":
+        print("\n" + "="*50)
+        print("🔍 PatternExtractor Test")
+        print("="*50)
+        context = ExtractionContext(
+            task_id='test-001',
+            task_description=args.task,
+            agent_id='test-agent',
+            outcome='SUCCESS',
+            quality_score=0.95,
+            messages=[
+                {'role': 'user', 'content': args.task},
+                {'role': 'assistant', 'content': 'I will help with this task'},
+            ],
+            duration_ms=5000,
+            timestamp=datetime.now().isoformat()
+        )
+        extractor = PatternExtractor()
+        pattern = extractor.extract_from_task(context, min_quality=PatternQuality.LOW)
+        if pattern:
+            print(f"✅ Pattern extracted:")
+            print(f"   Name: {pattern.name}")
+            print(f"   Category: {pattern.category}")
+            print(f"   Quality: {pattern.quality}")
+        else:
+            print("ℹ️  No pattern extracted (not enough context)")

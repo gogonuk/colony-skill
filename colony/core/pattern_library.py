@@ -8,7 +8,7 @@ Patterns are organized by category and can be searched by keywords.
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 import json
 import uuid
 
@@ -137,14 +137,65 @@ class PatternLibrary:
         self,
         task_description: str,
         category: Optional[str] = None,
-        limit: int = 3
-    ) -> List[tuple[Pattern, float]]:
+        limit: int = 3,
+        chunked: bool = True
+    ) -> Union['PatternChunkedResult', List[tuple[Pattern, float]]]:
         """
         Find patterns relevant to a task description.
 
         Args:
             task_description: Description of the task
             category: Filter by category (optional)
+            limit: Maximum number of patterns to return (for non-chunked mode)
+            chunked: If True, return ChunkedResult; if False, return raw list
+
+        Returns:
+            PatternChunkedResult (if chunked=True) or
+            List of (Pattern, relevance_score) tuples (if chunked=False)
+        """
+        from .chunked_result import PatternChunkedResult, TierConfig
+
+        if chunked:
+            # Create chunked result with lazy loading
+            def loader(min_relevance: float, max_items: int) -> List[tuple[Pattern, float]]:
+                return self._find_relevant_raw(
+                    task_description,
+                    category,
+                    min_relevance=min_relevance,
+                    limit=max_items
+                )
+
+            return PatternChunkedResult(
+                query=task_description,
+                loader=loader,
+                config=TierConfig(
+                    critical_limit=2,
+                    relevant_limit=5,
+                    context_limit=10,
+                    all_limit=50,
+                    critical_min_relevance=0.7,
+                    relevant_min_relevance=0.4,
+                    context_min_relevance=0.2
+                )
+            )
+        else:
+            # Legacy behavior: return raw list
+            return self._find_relevant_raw(task_description, category, limit=limit)
+
+    def _find_relevant_raw(
+        self,
+        task_description: str,
+        category: Optional[str] = None,
+        min_relevance: float = 0.0,
+        limit: int = 50
+    ) -> List[tuple[Pattern, float]]:
+        """
+        Raw pattern search without chunking.
+
+        Args:
+            task_description: Description of the task
+            category: Filter by category (optional)
+            min_relevance: Minimum relevance threshold (default: 0.0)
             limit: Maximum number of patterns to return
 
         Returns:
@@ -172,7 +223,7 @@ class PatternLibrary:
                     # Calculate relevance
                     relevance = self._calculate_relevance(task_keywords, pattern.trigger_keywords)
 
-                    if relevance > 0.3:
+                    if relevance >= max(min_relevance, 0.2):  # Minimum threshold
                         relevant.append((pattern, relevance))
                 except (json.JSONDecodeError, TypeError):
                     continue
