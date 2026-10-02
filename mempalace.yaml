@@ -1,0 +1,10 @@
+wing: colony_skill
+rooms:
+  - name: colony
+    description: Colony skill files
+  - name: code
+    description: Source code
+  - name: docs
+    description: Documentation
+  - name: general
+    description: General files
